@@ -42,6 +42,16 @@ export declare function computeVirtualRange(
   overscan?: number
 ): VirtualRange;
 
+export declare function computeGridVirtualRange(
+  scrollTop: number,
+  viewportHeight: number,
+  itemCount: number,
+  itemHeight: number,
+  columns: number,
+  gap?: number,
+  overscanRows?: number
+): VirtualRange;
+
 export declare function resolveItemKey(
   item: unknown,
   index: number,

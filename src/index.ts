@@ -1,12 +1,22 @@
 import draggable from "./VirtualDraggable.vue";
-import { computeVirtualRange, reorderList, resolveItemKey } from "./utils";
+import {
+  computeGridVirtualRange,
+  computeVirtualRange,
+  reorderList,
+  resolveItemKey,
+} from "./utils";
 
-/** Near drop-in for `vuedraggable` (Vue 2) with virtualized rendering. */
+/** Near drop-in for `vuedraggable` (Vue 2) with virtualized list/grid rendering. */
 export { draggable };
 /** Explicit alias — same component. */
 export { draggable as VirtualDraggable };
 
-export { computeVirtualRange, reorderList, resolveItemKey };
+export {
+  computeGridVirtualRange,
+  computeVirtualRange,
+  reorderList,
+  resolveItemKey,
+};
 export type {
   ChangeEvent,
   DraggedContext,

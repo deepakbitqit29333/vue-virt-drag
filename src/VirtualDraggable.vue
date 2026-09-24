@@ -13,7 +13,8 @@
           :is="tag"
           ref="listEl"
           class="vdv-list"
-          :style="{ transform: 'translateY(' + offsetY + 'px)' }"
+          :class="listClass"
+          :style="listStyle"
           v-bind="tagAttrs"
         >
           <div
@@ -45,7 +46,7 @@ import Sortable, {
   MoveEvent as SortableMoveEvent,
 } from "sortablejs";
 import {
-  computeVirtualRange,
+  computeGridVirtualRange,
   reorderList,
   resolveItemKey,
 } from "./utils";
@@ -140,11 +141,41 @@ export default Vue.extend({
       >,
       required: true,
     },
-    /** Fixed row height in px — required for windowing. */
+    /** Fixed row/cell height in px — required for windowing. */
     itemHeight: {
       type: Number,
       required: true,
       validator: (v: number) => v > 0,
+    },
+    /**
+     * Cell width in px for `layout="grid"`. Defaults to `itemHeight` (square cells).
+     * Ignored for list layout.
+     */
+    itemWidth: {
+      type: Number,
+      default: undefined,
+      validator: (v: number | undefined) => v == null || v > 0,
+    },
+    /**
+     * Layout mode. `list` = single column (default). `grid` = CSS grid with
+     * `columns` cells per row; virtualization windows by row.
+     */
+    layout: {
+      type: String as PropType<"list" | "grid">,
+      default: "list",
+      validator: (v: string) => v === "list" || v === "grid",
+    },
+    /** Column count when `layout="grid"` (default 4). Ignored for list. */
+    columns: {
+      type: Number,
+      default: 4,
+      validator: (v: number) => v >= 1,
+    },
+    /** Gap between grid cells in px (also used as row stride for windowing). */
+    gap: {
+      type: Number,
+      default: 0,
+      validator: (v: number) => v >= 0,
     },
     /** Scroll viewport height in px. */
     height: {
@@ -186,7 +217,7 @@ export default Vue.extend({
     swapThreshold: { type: Number, default: 1 },
     invertSwap: { type: Boolean, default: false },
     invertedSwapThreshold: { type: Number, default: undefined },
-    direction: { type: String, default: "vertical" },
+    direction: { type: String, default: undefined },
     forceFallback: { type: Boolean, default: false },
     fallbackClass: { type: String, default: "sortable-fallback" },
     fallbackOnBody: { type: Boolean, default: false },
@@ -218,12 +249,28 @@ export default Vue.extend({
       if (this.list != null) return this.list as ListItem[];
       return (this.value as ListItem[]) || [];
     },
-    range(): ReturnType<typeof computeVirtualRange> {
-      return computeVirtualRange(
+    isGrid(): boolean {
+      return this.layout === "grid";
+    },
+    resolvedColumns(): number {
+      return this.isGrid ? Math.max(1, Math.floor(this.columns) || 1) : 1;
+    },
+    resolvedItemWidth(): number {
+      return this.itemWidth != null && this.itemWidth > 0
+        ? this.itemWidth
+        : this.itemHeight;
+    },
+    resolvedGap(): number {
+      return this.isGrid ? Math.max(0, this.gap) : 0;
+    },
+    range(): ReturnType<typeof computeGridVirtualRange> {
+      return computeGridVirtualRange(
         this.scrollTop,
         this.height,
         this.realList.length,
         this.itemHeight,
+        this.resolvedColumns,
+        this.resolvedGap,
         this.overscan
       );
     },
@@ -254,7 +301,33 @@ export default Vue.extend({
         position: "relative",
       };
     },
+    listClass(): Record<string, boolean> {
+      return {
+        "vdv-list--grid": this.isGrid,
+        "vdv-list--list": !this.isGrid,
+      };
+    },
+    listStyle(): Record<string, string> {
+      const style: Record<string, string> = {
+        transform: `translateY(${this.offsetY}px)`,
+      };
+      if (this.isGrid) {
+        style.display = "grid";
+        style.gridTemplateColumns = `repeat(${this.resolvedColumns}, ${this.resolvedItemWidth}px)`;
+        style.gap = `${this.resolvedGap}px`;
+        style.width = "100%";
+        style.justifyContent = "start";
+      }
+      return style;
+    },
     itemStyle(): Record<string, string> {
+      if (this.isGrid) {
+        return {
+          width: `${this.resolvedItemWidth}px`,
+          height: `${this.itemHeight}px`,
+          boxSizing: "border-box",
+        };
+      }
       return {
         height: `${this.itemHeight}px`,
         boxSizing: "border-box",
@@ -277,6 +350,14 @@ export default Vue.extend({
     },
     group(val: string | GroupOptions | undefined) {
       this.sortable?.option("group", val as never);
+    },
+    layout() {
+      this.$nextTick(() => this.ensureSortable());
+    },
+    columns() {
+      if (this.isGrid) {
+        this.$nextTick(() => this.ensureSortable());
+      }
     },
     realList() {
       this.$nextTick(() => {
@@ -311,8 +392,15 @@ export default Vue.extend({
           opts[key] = val;
         }
       }
-      // Virtualization owns which nodes exist; never let Sortable pull from other lists
-      // in this first slice without an explicit group (still same-list by default).
+      // List defaults to vertical; grid leaves direction unset so Sortable
+      // can detect 2D movement across cells.
+      if (opts.direction === undefined) {
+        if (!this.isGrid) {
+          opts.direction = "vertical";
+        } else {
+          delete opts.direction;
+        }
+      }
       opts.onStart = (evt: SortableEvent) => this.onDragStart(evt);
       opts.onAdd = (evt: SortableEvent) => this.onDragAdd(evt);
       opts.onRemove = (evt: SortableEvent) => this.onDragRemove(evt);
@@ -333,8 +421,10 @@ export default Vue.extend({
     },
     ensureSortable() {
       const el = this.getListElement();
-      if (!el || this.sortable) return;
-
+      if (!el) return;
+      if (this.sortable) {
+        this.destroySortable();
+      }
       this.sortable = Sortable.create(el, this.buildSortableOptions() as never);
     },
     destroySortable() {
@@ -483,7 +573,10 @@ export default Vue.extend({
     scrollToIndex(index: number) {
       const viewport = this.$refs.viewport as HTMLElement | undefined;
       if (!viewport) return;
-      const top = Math.max(0, index * this.itemHeight);
+      const cols = this.resolvedColumns;
+      const row = Math.floor(Math.max(0, index) / cols);
+      const stride = this.itemHeight + this.resolvedGap;
+      const top = Math.max(0, row * stride);
       viewport.scrollTop = top;
       this.scrollTop = top;
     },
@@ -511,6 +604,10 @@ export default Vue.extend({
   left: 0;
   right: 0;
   will-change: transform;
+}
+
+.vdv-list--grid {
+  right: auto;
 }
 
 .vdv-item {
