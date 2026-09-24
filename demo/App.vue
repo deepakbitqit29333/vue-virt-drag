@@ -41,6 +41,7 @@
         :overscan="6"
         handle=".handle"
         :disabled="disabled"
+        :force-fallback="true"
         ghost-class="demo-ghost"
         chosen-class="demo-chosen"
         :animation="150"
