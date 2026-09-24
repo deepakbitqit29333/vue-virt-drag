@@ -1,0 +1,59 @@
+{
+  "name": "vue-drag-virtualization",
+  "version": "0.1.0",
+  "description": "Vue 2 drag-and-drop list with windowed/virtual rendering",
+  "license": "MIT",
+  "main": "./dist/vue-drag-virtualization.umd.js",
+  "module": "./dist/vue-drag-virtualization.es.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/vue-drag-virtualization.es.js",
+      "require": "./dist/vue-drag-virtualization.umd.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./style.css": "./dist/vue-drag-virtualization.css"
+  },
+  "sideEffects": [
+    "*.css"
+  ],
+  "scripts": {
+    "dev": "vite --config vite.demo.config.ts",
+    "build": "vite build && cp src/index.d.ts dist/index.d.ts",
+    "build:demo": "vite build --config vite.demo.config.ts",
+    "preview": "vite preview --config vite.demo.config.ts --port 43127",
+    "test": "node --import tsx --test src/utils.test.ts",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "peerDependencies": {
+    "vue": "^2.6.14 || ^2.7.0"
+  },
+  "dependencies": {
+    "sortablejs": "^1.15.6"
+  },
+  "devDependencies": {
+    "@types/sortablejs": "^1.15.8",
+    "@vitejs/plugin-vue2": "^2.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.3",
+    "vite": "^5.4.14",
+    "vue": "^2.7.16",
+    "vue-template-compiler": "^2.7.16",
+    "vue-tsc": "^2.2.0"
+  },
+  "keywords": [
+    "vue",
+    "vue2",
+    "drag",
+    "drop",
+    "sortable",
+    "virtual",
+    "virtualization",
+    "list",
+    "vuedraggable"
+  ]
+}
