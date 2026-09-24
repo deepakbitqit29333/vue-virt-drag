@@ -1,29 +1,58 @@
 {
   "name": "vue-drag-virtualization",
   "version": "0.1.0",
-  "description": "Vue 2 drag-and-drop list with windowed/virtual rendering",
+  "description": "Vue 2 near drop-in for vuedraggable with list and grid virtualization (SortableJS)",
   "license": "MIT",
+  "author": "techdeepak",
+  "homepage": "https://cursor.com/codebase/techdeepak/vue-virt-drag",
+  "repository": {
+    "type": "git",
+    "url": "git+https://origin.cursor.com/techdeepak/vue-virt-drag.git"
+  },
+  "bugs": {
+    "url": "https://cursor.com/codebase/techdeepak/vue-virt-drag"
+  },
+  "keywords": [
+    "vue",
+    "vue2",
+    "drag",
+    "drop",
+    "sortable",
+    "sortablejs",
+    "virtual",
+    "virtualization",
+    "virtual-list",
+    "grid",
+    "list",
+    "vuedraggable"
+  ],
   "main": "./dist/vue-drag-virtualization.umd.js",
   "module": "./dist/vue-drag-virtualization.es.js",
   "types": "./dist/index.d.ts",
-  "files": [
-    "dist",
-    "src"
-  ],
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/vue-drag-virtualization.es.js",
-      "require": "./dist/vue-drag-virtualization.umd.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/vue-drag-virtualization.umd.js"
     },
-    "./style.css": "./dist/vue-drag-virtualization.css"
+    "./style.css": "./dist/vue-drag-virtualization.css",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
   "sideEffects": [
     "*.css"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "vite --config vite.demo.config.ts",
     "build": "vite build && cp src/index.d.ts dist/index.d.ts",
+    "prepublishOnly": "npm test && npm run build",
     "build:demo": "vite build --config vite.demo.config.ts",
     "preview": "vite preview --config vite.demo.config.ts --port 43127",
     "test": "node --import tsx --test src/utils.test.ts",
@@ -45,15 +74,7 @@
     "vue-template-compiler": "^2.7.16",
     "vue-tsc": "^2.2.0"
   },
-  "keywords": [
-    "vue",
-    "vue2",
-    "drag",
-    "drop",
-    "sortable",
-    "virtual",
-    "virtualization",
-    "list",
-    "vuedraggable"
-  ]
+  "engines": {
+    "node": ">=18"
+  }
 }
