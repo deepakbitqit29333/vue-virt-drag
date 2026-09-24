@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "description": "Vue 2 near drop-in for vuedraggable with list and grid virtualization (SortableJS)",
   "license": "MIT",
-  "author": "techdeepak",
-  "homepage": "https://cursor.com/codebase/techdeepak/vue-virt-drag",
+  "author": "deepakbitqit29333",
+  "homepage": "https://github.com/deepakbitqit29333/vue-virt-drag#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://origin.cursor.com/techdeepak/vue-virt-drag.git"
+    "url": "git+https://github.com/deepakbitqit29333/vue-virt-drag.git"
   },
   "bugs": {
-    "url": "https://cursor.com/codebase/techdeepak/vue-virt-drag"
+    "url": "https://github.com/deepakbitqit29333/vue-virt-drag/issues"
   },
   "keywords": [
     "vue",
