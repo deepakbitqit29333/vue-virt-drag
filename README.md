@@ -4,6 +4,8 @@ Vue **2.6+ / 2.7** library: **drag-and-drop + list/grid virtualization** in one 
 
 Near drop-in for [`vuedraggable`](https://github.com/SortableJS/Vue.Draggable) `^2.24.3` (SortableJS-based), with windowed rendering so long collections only mount visible rows/cells.
 
+**Repo:** [github.com/deepakbitqit29333/vue-virt-drag](https://github.com/deepakbitqit29333/vue-virt-drag) · **Package:** `vue-drag-virtualization@0.1.0`
+
 ## Quick start
 
 ```bash
@@ -11,7 +13,7 @@ npm install
 npm run dev
 ```
 
-Demo playground: [http://127.0.0.1:43127](http://127.0.0.1:43127)
+Demo playground (List / Grid tabs): [http://127.0.0.1:43127](http://127.0.0.1:43127)
 
 ```bash
 npm run build        # library → dist/
@@ -120,6 +122,12 @@ That is the intentional break vs plain vuedraggable: virtualization must control
 - **Nested** draggables not supported.
 - Default-slot `v-for` and `transition-group` as root children are not supported (use `#item`).
 - Locked-item / cancel semantics go through the `move` prop, same as vuedraggable.
+
+## Links
+
+- Source: https://github.com/deepakbitqit29333/vue-virt-drag
+- Issues: https://github.com/deepakbitqit29333/vue-virt-drag/issues
+- Origin (Cursor): https://cursor.com/codebase/techdeepak/vue-virt-drag
 
 ## License
 
