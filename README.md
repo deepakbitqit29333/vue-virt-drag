@@ -13,7 +13,9 @@ npm install
 npm run dev
 ```
 
-Demo playground (List / Grid tabs): [http://127.0.0.1:43127](http://127.0.0.1:43127)
+**Live demo:** [https://deepakbitqit29333.github.io/vue-virt-drag/](https://deepakbitqit29333.github.io/vue-virt-drag/) (List / Grid tabs)
+
+Local playground: `npm run dev` → [http://127.0.0.1:43127](http://127.0.0.1:43127)
 
 ```bash
 npm run build        # library → dist/
@@ -125,6 +127,7 @@ That is the intentional break vs plain vuedraggable: virtualization must control
 
 ## Links
 
+- Live demo: https://deepakbitqit29333.github.io/vue-virt-drag/
 - Source: https://github.com/deepakbitqit29333/vue-virt-drag
 - Issues: https://github.com/deepakbitqit29333/vue-virt-drag/issues
 - Origin (Cursor): https://cursor.com/codebase/techdeepak/vue-virt-drag

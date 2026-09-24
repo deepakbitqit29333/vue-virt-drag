@@ -5,6 +5,12 @@ import { resolve } from "path";
 export default defineConfig({
   plugins: [vue()],
   root: resolve(__dirname, "demo"),
+  // Project Pages site: https://deepakbitqit29333.github.io/vue-virt-drag/
+  base: process.env.DEMO_BASE ?? "/vue-virt-drag/",
+  build: {
+    outDir: resolve(__dirname, "demo-dist"),
+    emptyOutDir: true,
+  },
   resolve: {
     alias: {
       "vue-drag-virtualization": resolve(__dirname, "src/index.ts"),
