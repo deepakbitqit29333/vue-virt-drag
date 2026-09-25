@@ -12,23 +12,25 @@
         <component
           :is="tag"
           ref="listEl"
+          :key="'vdv-win-' + listEpoch"
           class="vdv-list"
           :class="listClass"
           :style="listStyle"
           v-bind="tagAttrs"
         >
           <div
-            v-for="(element, localIndex) in visibleItems"
-            :key="itemKeys[localIndex]"
+            v-for="entry in visibleEntries"
+            :key="entry.key"
             class="vdv-item"
-            :data-id="String(itemKeys[localIndex])"
-            :data-index="startIndex + localIndex"
-            :style="itemStyle"
+            :class="{ 'vdv-item--pin': entry.pinned }"
+            :data-id="String(entry.key)"
+            :data-index="entry.index"
+            :style="entry.pinned ? pinItemStyle : itemStyle"
           >
             <slot
               name="item"
-              :element="element"
-              :index="startIndex + localIndex"
+              :element="entry.element"
+              :index="entry.index"
             />
           </div>
         </component>
@@ -249,6 +251,8 @@ export default Vue.extend({
       scrollTop: 0,
       sortable: null as Sortable | null,
       dragging: false,
+      /** Bumped after each drag to remount the window without DOM desync. */
+      listEpoch: 0,
       /** Absolute source index captured at drag start (stable across window shifts). */
       dragAbsIndex: -1,
       lastPointerX: 0,
@@ -311,13 +315,65 @@ export default Vue.extend({
     totalHeight(): number {
       return this.range.totalHeight;
     },
-    visibleItems(): ListItem[] {
-      return this.realList.slice(this.startIndex, this.endIndex);
+    /**
+     * Windowed rows plus an optional drag pin. When the source scrolls out of
+     * the virtual window, keep the same keyed node mounted (pinned) so Sortable
+     * never holds a detached elm — that is what triggers insertBefore NotFoundError.
+     */
+    visibleEntries(): Array<{
+      element: ListItem;
+      index: number;
+      key: string | number;
+      pinned: boolean;
+    }> {
+      const list = this.realList;
+      const start = this.startIndex;
+      const end = this.endIndex;
+      const entries: Array<{
+        element: ListItem;
+        index: number;
+        key: string | number;
+        pinned: boolean;
+      }> = [];
+      for (let i = start; i < end; i++) {
+        entries.push({
+          element: list[i],
+          index: i,
+          key: resolveItemKey(list[i], i, this.itemKey),
+          pinned: false,
+        });
+      }
+      const pin = this.dragAbsIndex;
+      if (
+        this.dragging &&
+        pin >= 0 &&
+        pin < list.length &&
+        (pin < start || pin >= end)
+      ) {
+        entries.push({
+          element: list[pin],
+          index: pin,
+          key: resolveItemKey(list[pin], pin, this.itemKey),
+          pinned: true,
+        });
+      }
+      return entries;
     },
-    itemKeys(): Array<string | number> {
-      return this.visibleItems.map((el, i) =>
-        resolveItemKey(el, this.startIndex + i, this.itemKey)
-      );
+    pinItemStyle(): Record<string, string> {
+      // Keep Sortable's dragEl in listEl without affecting grid/list flow.
+      return {
+        position: "absolute",
+        left: "0",
+        top: "0",
+        width: "1px",
+        height: "1px",
+        overflow: "hidden",
+        opacity: "0",
+        pointerEvents: "none",
+        margin: "0",
+        padding: "0",
+        border: "none",
+      };
     },
     viewportStyle(): Record<string, string> {
       return {
@@ -377,7 +433,9 @@ export default Vue.extend({
       this.sortable?.option("group", val as never);
     },
     layout() {
-      this.$nextTick(() => this.ensureSortable());
+      // List↔grid switches must remount so Vue owns a clean tree (Sortable
+      // direction/DOM assumptions differ between layouts).
+      this.reconcileListDom();
     },
     columns() {
       if (this.isGrid) {
@@ -385,9 +443,7 @@ export default Vue.extend({
       }
     },
     realList() {
-      this.$nextTick(() => {
-        // Windowed DOM set changed; Sortable stays bound to listEl.
-      });
+      // Windowed DOM set changed; Sortable stays bound to listEl until reconcile.
     },
   },
   mounted() {
@@ -668,9 +724,13 @@ export default Vue.extend({
         this.lastPointerY = oe.clientY;
         this.updateDropIndexFromPointer();
       }
-      if (!this.move) return true;
-      const ctx = this.contextForMove(evt);
-      return this.move(ctx, evt);
+      if (this.move) {
+        const ctx = this.contextForMove(evt);
+        if (this.move(ctx, evt) === false) return false;
+      }
+      // Always cancel Sortable live DOM reorder. Vue owns these nodes —
+      // Sortable insertBefore against a remounted window throws NotFoundError.
+      return false;
     },
     onDragStart(evt: SortableEvent) {
       this.dragging = true;
@@ -691,16 +751,14 @@ export default Vue.extend({
     },
     onDragUpdate(evt: SortableEvent) {
       this.emitSortableEvent("update", evt);
-      // Same-list reorder is finalized in onEnd after DOM revert.
     },
     onDragAdd(evt: SortableEvent) {
-      // Cross-list add: not fully supported in first slice (virtualization + shared groups).
       this.emitSortableEvent("add", evt);
-      this.detachSortableItem(evt.item);
+      this.cleanupSortableLeftovers(evt.item);
     },
     onDragRemove(evt: SortableEvent) {
       this.emitSortableEvent("remove", evt);
-      this.detachSortableItem(evt.item);
+      this.cleanupSortableLeftovers(evt.item);
     },
     onDragEnd(evt: SortableEvent) {
       this.updateDropIndexFromPointer();
@@ -714,11 +772,6 @@ export default Vue.extend({
       if (newAbs >= this.realList.length) newAbs = this.realList.length - 1;
 
       this.teardownDragAssist();
-      this.dragging = false;
-
-      // Critical: never re-insert Sortable's node after the virtual window remounts.
-      // revertSortableDom used to insertBefore an orphaned evt.item → duplicate data-id.
-      this.detachSortableItem(evt.item);
 
       const didMove =
         evt.from === evt.to &&
@@ -728,38 +781,52 @@ export default Vue.extend({
         oldAbs < this.realList.length &&
         newAbs < this.realList.length;
 
+      // Drop + cancel share this path (Sortable always ends via onEnd).
+      // Strip body clones only — never removeChild Vue list nodes (duplicate ids).
+      this.cleanupSortableLeftovers(evt.item);
+
       if (didMove) {
         this.spliceList(oldAbs, newAbs);
-      } else {
-        // Force Vue to remount the window without the detached Sortable node.
-        this.$forceUpdate();
       }
 
+      this.dragging = false;
       this.dragAbsIndex = -1;
       this.dropAbsIndex = -1;
 
       this.emitSortableEvent("end", evt, { oldIndex: oldAbs, newIndex: newAbs });
+
+      // Full reconcile: Vue remounts the window; Sortable rebinds to fresh nodes.
+      this.reconcileListDom();
     },
     /**
-     * Remove Sortable-managed item from our list container (and strip leftover
-     * fallback clones). Vue owns the windowed DOM after this.
+     * Destroy Sortable, remount the windowed list under Vue, rebind Sortable.
+     * Clears orphan Sortable nodes and prevents insertBefore against detached refs.
      */
-    detachSortableItem(item: HTMLElement | undefined | null) {
-      if (!item) return;
+    reconcileListDom() {
+      this.destroySortable();
+      this.cleanupSortableLeftovers(null);
+      this.listEpoch += 1;
+      this.$nextTick(() => {
+        this.ensureSortable();
+      });
+    },
+    /**
+     * Strip floating Sortable clones only. Never removeChild Vue list nodes.
+     */
+    cleanupSortableLeftovers(item: HTMLElement | undefined | null) {
       const listEl = this.getListElement();
-      if (listEl && listEl.contains(item)) {
-        listEl.removeChild(item);
-      } else if (item.parentNode && item.parentNode !== document.body) {
-        // Detached from list already (virtual remount); drop if it landed elsewhere
-        // inside our root (not the floating fallback on body).
-        const root = this.$el as HTMLElement | undefined;
-        if (root && root.contains(item)) {
-          item.parentNode.removeChild(item);
+
+      if (item && item.parentNode) {
+        const parent = item.parentNode as Node;
+        if (listEl && parent === listEl) {
+          // Vue-owned — remount via listEpoch / reconcileListDom.
+        } else if (parent === document.body) {
+          parent.removeChild(item);
         }
       }
-      // Clean Sortable fallback leftovers hanging on body.
+
       document
-        .querySelectorAll(".sortable-fallback, .sortable-drag")
+        .querySelectorAll("body > .sortable-fallback, body > .sortable-drag")
         .forEach((node) => {
           if (node.parentNode) node.parentNode.removeChild(node);
         });
@@ -794,8 +861,7 @@ export default Vue.extend({
       this.$emit(name, payload);
     },
     revertSortableDom(evt: SortableEvent) {
-      // Used only for add/remove stubs. Never reinsert an item that virtualization
-      // already unmounted — that creates duplicate data-id nodes.
+      // Kept for compatibility; unused on the happy path. Never reinsert orphans.
       const parent = evt.from;
       if (!parent || !evt.item || evt.oldIndex == null) return;
       const children = Array.from(parent.children) as HTMLElement[];
@@ -852,5 +918,12 @@ export default Vue.extend({
 
 .vdv-item {
   width: 100%;
+}
+
+.vdv-item--pin {
+  /* Sortable drag source kept mounted outside the virtual window */
+  flex: none;
+  grid-column: 1;
+  grid-row: 1;
 }
 </style>
