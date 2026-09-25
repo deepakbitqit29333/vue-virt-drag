@@ -795,8 +795,12 @@ export default Vue.extend({
 
       this.emitSortableEvent("end", evt, { oldIndex: oldAbs, newIndex: newAbs });
 
-      // Full reconcile: Vue remounts the window; Sortable rebinds to fresh nodes.
-      this.reconcileListDom();
+      // Defer past Sortable's _onDrop (destroy() re-enters _onDrop). Remount under
+      // Vue and clear forceFallback's ignoreNextClick so List↔Grid clicks work.
+      setTimeout(() => {
+        this.reconcileListDom();
+        this.clearSortableClickGuard();
+      }, 0);
     },
     /**
      * Destroy Sortable, remount the windowed list under Vue, rebind Sortable.
@@ -809,6 +813,24 @@ export default Vue.extend({
       this.$nextTick(() => {
         this.ensureSortable();
       });
+    },
+    /**
+     * SortableJS (forceFallback) sets ignoreNextClick and capture-listens on
+     * document to preventDefault/stopImmediatePropagation on the next click.
+     * A synthetic click clears that flag without needing a user gesture.
+     */
+    clearSortableClickGuard() {
+      try {
+        document.dispatchEvent(
+          new MouseEvent("click", {
+            bubbles: true,
+            cancelable: true,
+            view: typeof window !== "undefined" ? window : undefined,
+          })
+        );
+      } catch (_) {
+        /* SSR / non-DOM — no-op */
+      }
     },
     /**
      * Strip floating Sortable clones only. Never removeChild Vue list nodes.
