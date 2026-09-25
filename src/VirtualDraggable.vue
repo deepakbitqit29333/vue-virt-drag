@@ -597,8 +597,11 @@ export default Vue.extend({
       window.addEventListener("touchmove", this.boundPointerMove, {
         passive: true,
       });
-      const viewport = this.getViewport();
-      viewport?.addEventListener("wheel", this.boundWheel, { passive: false });
+      // Capture on window so wheel works even when the ghost covers the viewport.
+      window.addEventListener("wheel", this.boundWheel, {
+        passive: false,
+        capture: true,
+      });
     },
     teardownDragAssist() {
       if (this.boundPointerMove) {
@@ -608,7 +611,7 @@ export default Vue.extend({
         this.boundPointerMove = null;
       }
       if (this.boundWheel) {
-        this.getViewport()?.removeEventListener("wheel", this.boundWheel);
+        window.removeEventListener("wheel", this.boundWheel, true);
         this.boundWheel = null;
       }
       if (this.scrollRaf) {
