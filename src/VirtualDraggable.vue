@@ -218,17 +218,25 @@ export default Vue.extend({
     invertSwap: { type: Boolean, default: false },
     invertedSwapThreshold: { type: Number, default: undefined },
     direction: { type: String, default: undefined },
-    forceFallback: { type: Boolean, default: false },
     fallbackClass: { type: String, default: "sortable-fallback" },
-    fallbackOnBody: { type: Boolean, default: false },
     fallbackTolerance: { type: Number, default: 0 },
     dragoverBubble: { type: Boolean, default: false },
     removeCloneOnHide: { type: Boolean, default: true },
     emptyInsertThreshold: { type: Number, default: 5 },
     scroll: { type: Boolean, default: true },
-    scrollSensitivity: { type: Number, default: 30 },
-    scrollSpeed: { type: Number, default: 10 },
+    /** Edge auto-scroll zone (px). Higher helps long virtual lists. */
+    scrollSensitivity: { type: Number, default: 60 },
+    /** Edge auto-scroll speed (px/tick). Higher helps 1→2000 moves. */
+    scrollSpeed: { type: Number, default: 28 },
     bubbleScroll: { type: Boolean, default: true },
+    /**
+     * Prefer fallback drag for virtual lists so scrolling can remount
+     * windowed nodes without losing the drag ghost.
+     */
+    forceFallback: { type: Boolean, default: true },
+    fallbackOnBody: { type: Boolean, default: true },
+    /** Wheel multiplier while dragging (smooth long-distance scroll). */
+    dragWheelMultiplier: { type: Number, default: 1.35 },
 
     /** Escape hatch: merged last into Sortable options. */
     options: {
@@ -241,6 +249,16 @@ export default Vue.extend({
       scrollTop: 0,
       sortable: null as Sortable | null,
       dragging: false,
+      /** Absolute source index captured at drag start (stable across window shifts). */
+      dragAbsIndex: -1,
+      lastPointerX: 0,
+      lastPointerY: 0,
+      dropAbsIndex: -1,
+      scrollRaf: 0 as number,
+      autoScrollRaf: 0 as number,
+      autoScrollDir: 0,
+      boundPointerMove: null as ((e: PointerEvent | MouseEvent | TouchEvent) => void) | null,
+      boundWheel: null as ((e: WheelEvent) => void) | null,
     };
   },
   computed: {
@@ -263,6 +281,13 @@ export default Vue.extend({
     resolvedGap(): number {
       return this.isGrid ? Math.max(0, this.gap) : 0;
     },
+    rowStride(): number {
+      return this.itemHeight + this.resolvedGap;
+    },
+    effectiveOverscan(): number {
+      // Keep a wider window while dragging so remounts are less jarring.
+      return this.dragging ? Math.max(this.overscan, 24) : this.overscan;
+    },
     range(): ReturnType<typeof computeGridVirtualRange> {
       return computeGridVirtualRange(
         this.scrollTop,
@@ -271,7 +296,7 @@ export default Vue.extend({
         this.itemHeight,
         this.resolvedColumns,
         this.resolvedGap,
-        this.overscan
+        this.effectiveOverscan
       );
     },
     startIndex(): number {
@@ -370,12 +395,24 @@ export default Vue.extend({
     this.ensureSortable();
   },
   beforeDestroy() {
+    this.teardownDragAssist();
     this.destroySortable();
   },
   methods: {
     onScroll(event: Event) {
       const target = event.target as HTMLElement;
-      this.scrollTop = target.scrollTop;
+      const next = target.scrollTop;
+      if (!this.dragging) {
+        this.scrollTop = next;
+        return;
+      }
+      // Throttle virtual window updates while dragging to reduce remount churn.
+      if (this.scrollRaf) cancelAnimationFrame(this.scrollRaf);
+      this.scrollRaf = requestAnimationFrame(() => {
+        this.scrollTop = next;
+        this.scrollRaf = 0;
+        this.updateDropIndexFromPointer();
+      });
     },
     bindComponentDataListeners() {
       const on = this.componentData?.on;
@@ -439,29 +476,167 @@ export default Vue.extend({
       if (ref instanceof HTMLElement) return ref;
       return (ref.$el as HTMLElement) || null;
     },
+    getViewport(): HTMLElement | null {
+      return (this.$refs.viewport as HTMLElement | undefined) || null;
+    },
     toAbsoluteIndex(localIndex: number | undefined | null): number {
       if (localIndex == null || localIndex < 0) return -1;
       return this.startIndex + localIndex;
+    },
+    absIndexFromItemEl(el: HTMLElement | undefined | null): number {
+      if (!el) return -1;
+      const raw = el.getAttribute("data-index");
+      if (raw == null) return -1;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : -1;
     },
     domIndexOf(node: HTMLElement): number {
       const el = this.getListElement();
       if (!el) return -1;
       return Array.prototype.indexOf.call(el.children, node);
     },
+    /**
+     * Map pointer to absolute list index using scroll geometry.
+     * Reliable after long scrolls that remount the virtual window.
+     */
+    indexFromPointer(clientX: number, clientY: number): number {
+      const viewport = this.getViewport();
+      const len = this.realList.length;
+      if (!viewport || len === 0) return -1;
+      const rect = viewport.getBoundingClientRect();
+      const y = clientY - rect.top + viewport.scrollTop;
+      const stride = this.rowStride;
+      if (stride <= 0) return -1;
+
+      if (this.isGrid) {
+        const cols = this.resolvedColumns;
+        const rowCount = Math.ceil(len / cols);
+        let row = Math.floor(y / stride);
+        if (row < 0) row = 0;
+        if (row >= rowCount) row = rowCount - 1;
+        const colStride = this.resolvedItemWidth + this.resolvedGap;
+        let col = Math.floor((clientX - rect.left) / Math.max(1, colStride));
+        if (col < 0) col = 0;
+        if (col >= cols) col = cols - 1;
+        const idx = row * cols + col;
+        return Math.min(len - 1, Math.max(0, idx));
+      }
+
+      let idx = Math.floor(y / stride);
+      if (idx < 0) idx = 0;
+      if (idx >= len) idx = len - 1;
+      return idx;
+    },
+    updateDropIndexFromPointer() {
+      if (!this.dragging) return;
+      const idx = this.indexFromPointer(this.lastPointerX, this.lastPointerY);
+      if (idx >= 0) this.dropAbsIndex = idx;
+    },
+    extractClientXY(e: PointerEvent | MouseEvent | TouchEvent): { x: number; y: number } {
+      if ("touches" in e && e.touches && e.touches.length) {
+        return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      }
+      if ("changedTouches" in e && e.changedTouches && e.changedTouches.length) {
+        return {
+          x: e.changedTouches[0].clientX,
+          y: e.changedTouches[0].clientY,
+        };
+      }
+      const m = e as MouseEvent;
+      return { x: m.clientX, y: m.clientY };
+    },
+    onDragPointerMove(e: PointerEvent | MouseEvent | TouchEvent) {
+      const { x, y } = this.extractClientXY(e);
+      this.lastPointerX = x;
+      this.lastPointerY = y;
+      this.updateDropIndexFromPointer();
+      this.updateAutoScrollFromPointer(y);
+    },
+    onDragWheel(e: WheelEvent) {
+      const viewport = this.getViewport();
+      if (!viewport || !this.dragging) return;
+      e.preventDefault();
+      const delta = e.deltaY * this.dragWheelMultiplier;
+      viewport.scrollTop += delta;
+      this.scrollTop = viewport.scrollTop;
+      this.updateDropIndexFromPointer();
+    },
+    updateAutoScrollFromPointer(clientY: number) {
+      const viewport = this.getViewport();
+      if (!viewport) return;
+      const rect = viewport.getBoundingClientRect();
+      const sens = this.scrollSensitivity;
+      let dir = 0;
+      if (clientY < rect.top + sens) dir = -1;
+      else if (clientY > rect.bottom - sens) dir = 1;
+      this.autoScrollDir = dir;
+      if (dir !== 0 && !this.autoScrollRaf) {
+        this.tickAutoScroll();
+      }
+    },
+    tickAutoScroll() {
+      const viewport = this.getViewport();
+      if (!viewport || !this.dragging || this.autoScrollDir === 0) {
+        this.autoScrollRaf = 0;
+        return;
+      }
+      viewport.scrollTop += this.autoScrollDir * this.scrollSpeed;
+      this.scrollTop = viewport.scrollTop;
+      this.updateDropIndexFromPointer();
+      this.autoScrollRaf = requestAnimationFrame(() => this.tickAutoScroll());
+    },
+    setupDragAssist() {
+      this.boundPointerMove = (e) => this.onDragPointerMove(e);
+      this.boundWheel = (e) => this.onDragWheel(e);
+      window.addEventListener("pointermove", this.boundPointerMove, {
+        passive: true,
+      });
+      window.addEventListener("mousemove", this.boundPointerMove, {
+        passive: true,
+      });
+      window.addEventListener("touchmove", this.boundPointerMove, {
+        passive: true,
+      });
+      const viewport = this.getViewport();
+      viewport?.addEventListener("wheel", this.boundWheel, { passive: false });
+    },
+    teardownDragAssist() {
+      if (this.boundPointerMove) {
+        window.removeEventListener("pointermove", this.boundPointerMove);
+        window.removeEventListener("mousemove", this.boundPointerMove);
+        window.removeEventListener("touchmove", this.boundPointerMove);
+        this.boundPointerMove = null;
+      }
+      if (this.boundWheel) {
+        this.getViewport()?.removeEventListener("wheel", this.boundWheel);
+        this.boundWheel = null;
+      }
+      if (this.scrollRaf) {
+        cancelAnimationFrame(this.scrollRaf);
+        this.scrollRaf = 0;
+      }
+      this.autoScrollDir = 0;
+      if (this.autoScrollRaf) {
+        cancelAnimationFrame(this.autoScrollRaf);
+        this.autoScrollRaf = 0;
+      }
+    },
     contextForMove(
       evt: SortableMoveEvent
     ): MoveEventContext {
       const dragged = evt.dragged;
       const related = evt.related;
-      const oldLocal = dragged ? this.domIndexOf(dragged) : -1;
+      const fromAttr = this.absIndexFromItemEl(dragged);
+      const index = fromAttr >= 0 ? fromAttr : this.dragAbsIndex;
       const relatedLocal = related ? this.domIndexOf(related) : -1;
-      const index = this.toAbsoluteIndex(oldLocal);
-      let futureIndex = this.toAbsoluteIndex(relatedLocal);
-      if (evt.willInsertAfter && futureIndex >= 0) {
+      let futureIndex =
+        this.dropAbsIndex >= 0
+          ? this.dropAbsIndex
+          : this.toAbsoluteIndex(relatedLocal);
+      if (evt.willInsertAfter && this.dropAbsIndex < 0 && futureIndex >= 0) {
         futureIndex += 1;
       }
-      // When moving down, Sortable's insert-after index needs adjustment like vuedraggable.
-      if (index < futureIndex) {
+      if (index < futureIndex && this.dropAbsIndex < 0) {
         futureIndex -= 1;
       }
 
@@ -483,13 +658,33 @@ export default Vue.extend({
       };
     },
     onDragMove(evt: SortableMoveEvent, originalEvent: Event): boolean | void {
+      // Keep pointer-based drop target fresh during Sortable move probes.
+      if (originalEvent && "clientY" in originalEvent) {
+        const oe = originalEvent as MouseEvent;
+        this.lastPointerX = oe.clientX;
+        this.lastPointerY = oe.clientY;
+        this.updateDropIndexFromPointer();
+      }
       if (!this.move) return true;
       const ctx = this.contextForMove(evt);
       return this.move(ctx, evt);
     },
     onDragStart(evt: SortableEvent) {
       this.dragging = true;
-      this.emitSortableEvent("start", evt);
+      const fromAttr = this.absIndexFromItemEl(evt.item);
+      this.dragAbsIndex =
+        fromAttr >= 0 ? fromAttr : this.toAbsoluteIndex(evt.oldIndex);
+      this.dropAbsIndex = this.dragAbsIndex;
+      if (evt.originalEvent && "clientY" in (evt.originalEvent as object)) {
+        const oe = evt.originalEvent as MouseEvent;
+        this.lastPointerX = oe.clientX;
+        this.lastPointerY = oe.clientY;
+      }
+      this.setupDragAssist();
+      this.emitSortableEvent("start", evt, {
+        oldIndex: this.dragAbsIndex,
+        newIndex: this.dragAbsIndex,
+      });
     },
     onDragUpdate(evt: SortableEvent) {
       this.emitSortableEvent("update", evt);
@@ -505,10 +700,21 @@ export default Vue.extend({
       this.revertSortableDom(evt);
     },
     onDragEnd(evt: SortableEvent) {
-      this.dragging = false;
+      this.updateDropIndexFromPointer();
+      const oldAbs = this.dragAbsIndex;
+      let newAbs =
+        this.dropAbsIndex >= 0
+          ? this.dropAbsIndex
+          : this.toAbsoluteIndex(evt.newIndex);
 
-      const oldAbs = this.toAbsoluteIndex(evt.oldIndex);
-      const newAbs = this.toAbsoluteIndex(evt.newIndex);
+      // Clamp after list length / no-op
+      if (newAbs < 0) newAbs = oldAbs;
+      if (newAbs >= this.realList.length) newAbs = this.realList.length - 1;
+
+      this.teardownDragAssist();
+      this.dragging = false;
+      this.dragAbsIndex = -1;
+      this.dropAbsIndex = -1;
 
       // Undo Sortable DOM mutation — Vue owns the virtual window.
       this.revertSortableDom(evt);
@@ -571,12 +777,11 @@ export default Vue.extend({
     },
     /** Scroll so an absolute index is visible. */
     scrollToIndex(index: number) {
-      const viewport = this.$refs.viewport as HTMLElement | undefined;
+      const viewport = this.getViewport();
       if (!viewport) return;
       const cols = this.resolvedColumns;
       const row = Math.floor(Math.max(0, index) / cols);
-      const stride = this.itemHeight + this.resolvedGap;
-      const top = Math.max(0, row * stride);
+      const top = Math.max(0, row * this.rowStride);
       viewport.scrollTop = top;
       this.scrollTop = top;
     },

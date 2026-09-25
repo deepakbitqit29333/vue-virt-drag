@@ -48,6 +48,9 @@
           <button type="button" class="btn" @click="scrollMid">
             Jump mid
           </button>
+          <button type="button" class="btn" @click="scrollFar">
+            Jump ~2000
+          </button>
           <button type="button" class="btn" @click="reset">Reset</button>
         </div>
       </div>
@@ -68,19 +71,21 @@
         handle=".handle"
         :disabled="disabled"
         :force-fallback="true"
+        :fallback-on-body="true"
+        :scroll-sensitivity="72"
+        :scroll-speed="36"
         ghost-class="demo-ghost"
         chosen-class="demo-chosen"
-        :animation="150"
-        :move="onMove"
+        :animation="80"
         @start="onStart"
         @end="onEnd"
       >
         <template #item="{ element, index }">
-          <div class="row" :class="{ muted: element.locked }">
+          <div class="row">
             <button
               type="button"
               class="handle"
-              :disabled="disabled || element.locked"
+              :disabled="disabled"
               aria-label="Drag"
             >
               ⋮⋮
@@ -112,20 +117,22 @@
         handle=".handle"
         :disabled="disabled"
         :force-fallback="true"
+        :fallback-on-body="true"
+        :scroll-sensitivity="72"
+        :scroll-speed="36"
         ghost-class="demo-ghost"
         chosen-class="demo-chosen"
-        :animation="150"
-        :move="onMove"
+        :animation="80"
         viewport-class="grid-viewport"
         @start="onStart"
         @end="onEnd"
       >
         <template #item="{ element, index }">
-          <div class="cell" :class="{ muted: element.locked }">
+          <div class="cell">
             <button
               type="button"
               class="handle"
-              :disabled="disabled || element.locked"
+              :disabled="disabled"
               aria-label="Drag"
             >
               ⋮⋮
@@ -153,7 +160,6 @@
 <script lang="ts">
 import Vue from "vue";
 import draggable from "vue-drag-virtualization";
-import type { MoveEventContext } from "vue-drag-virtualization";
 
 const ITEM_HEIGHT = 52;
 const VIEWPORT_HEIGHT = 480;
@@ -166,7 +172,6 @@ interface Row {
   id: number;
   name: string;
   color: string;
-  locked?: boolean;
 }
 
 function makeList(n: number): Row[] {
@@ -175,7 +180,6 @@ function makeList(n: number): Row[] {
     id: i + 1,
     name: `Task ${i + 1}`,
     color: `hsl(${hues[i % hues.length]} 55% 42%)`,
-    locked: i % 97 === 0,
   }));
 }
 
@@ -189,7 +193,7 @@ export default Vue.extend({
       GRID_COLUMNS,
       CELL,
       GAP,
-      mode: "grid" as "list" | "grid",
+      mode: "list" as "list" | "grid",
       list: makeList(COUNT) as Row[],
       disabled: false,
       lastEvent: "" as string,
@@ -224,13 +228,6 @@ export default Vue.extend({
     },
   },
   methods: {
-    onMove(ctx: MoveEventContext<Row>) {
-      const dragged = ctx.draggedContext.element;
-      const related = ctx.relatedContext.element;
-      if (dragged?.locked) return false;
-      if (related?.locked) return false;
-      return true;
-    },
     onStart(evt: { oldIndex: number }) {
       this.lastEvent = `start oldIndex=${evt.oldIndex}`;
     },
@@ -254,6 +251,10 @@ export default Vue.extend({
     scrollMid() {
       const ref = this.$refs.listRef as { scrollToIndex?: (i: number) => void };
       ref?.scrollToIndex?.(Math.floor(this.list.length / 2));
+    },
+    scrollFar() {
+      const ref = this.$refs.listRef as { scrollToIndex?: (i: number) => void };
+      ref?.scrollToIndex?.(2000);
     },
   },
 });
