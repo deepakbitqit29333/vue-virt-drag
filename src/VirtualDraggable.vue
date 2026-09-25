@@ -807,10 +807,21 @@ export default Vue.extend({
      * Clears orphan Sortable nodes and prevents insertBefore against detached refs.
      */
     reconcileListDom() {
+      const viewport = this.getViewport();
+      // Remounting the keyed window can transiently reset native scrollTop; keep
+      // Vue's window and the viewport locked to the same offset (Jump mid / far).
+      const preserved =
+        viewport != null ? viewport.scrollTop : this.scrollTop;
+
       this.destroySortable();
       this.cleanupSortableLeftovers(null);
       this.listEpoch += 1;
+      this.scrollTop = preserved;
+
       this.$nextTick(() => {
+        const vp = this.getViewport();
+        if (vp) vp.scrollTop = preserved;
+        this.scrollTop = preserved;
         this.ensureSortable();
       });
     },
@@ -907,6 +918,13 @@ export default Vue.extend({
       const top = Math.max(0, row * this.rowStride);
       viewport.scrollTop = top;
       this.scrollTop = top;
+      // Re-apply after any pending keyed remount so Jump mid/far never lands blank.
+      this.$nextTick(() => {
+        const vp = this.getViewport();
+        if (!vp) return;
+        vp.scrollTop = top;
+        this.scrollTop = top;
+      });
     },
   },
 });
