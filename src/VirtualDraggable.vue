@@ -696,11 +696,11 @@ export default Vue.extend({
     onDragAdd(evt: SortableEvent) {
       // Cross-list add: not fully supported in first slice (virtualization + shared groups).
       this.emitSortableEvent("add", evt);
-      this.revertSortableDom(evt);
+      this.detachSortableItem(evt.item);
     },
     onDragRemove(evt: SortableEvent) {
       this.emitSortableEvent("remove", evt);
-      this.revertSortableDom(evt);
+      this.detachSortableItem(evt.item);
     },
     onDragEnd(evt: SortableEvent) {
       this.updateDropIndexFromPointer();
@@ -710,30 +710,59 @@ export default Vue.extend({
           ? this.dropAbsIndex
           : this.toAbsoluteIndex(evt.newIndex);
 
-      // Clamp after list length / no-op
       if (newAbs < 0) newAbs = oldAbs;
       if (newAbs >= this.realList.length) newAbs = this.realList.length - 1;
 
       this.teardownDragAssist();
       this.dragging = false;
-      this.dragAbsIndex = -1;
-      this.dropAbsIndex = -1;
 
-      // Undo Sortable DOM mutation — Vue owns the virtual window.
-      this.revertSortableDom(evt);
+      // Critical: never re-insert Sortable's node after the virtual window remounts.
+      // revertSortableDom used to insertBefore an orphaned evt.item → duplicate data-id.
+      this.detachSortableItem(evt.item);
 
-      if (
+      const didMove =
         evt.from === evt.to &&
         oldAbs !== newAbs &&
         oldAbs >= 0 &&
         newAbs >= 0 &&
         oldAbs < this.realList.length &&
-        newAbs < this.realList.length
-      ) {
+        newAbs < this.realList.length;
+
+      if (didMove) {
         this.spliceList(oldAbs, newAbs);
+      } else {
+        // Force Vue to remount the window without the detached Sortable node.
+        this.$forceUpdate();
       }
 
+      this.dragAbsIndex = -1;
+      this.dropAbsIndex = -1;
+
       this.emitSortableEvent("end", evt, { oldIndex: oldAbs, newIndex: newAbs });
+    },
+    /**
+     * Remove Sortable-managed item from our list container (and strip leftover
+     * fallback clones). Vue owns the windowed DOM after this.
+     */
+    detachSortableItem(item: HTMLElement | undefined | null) {
+      if (!item) return;
+      const listEl = this.getListElement();
+      if (listEl && listEl.contains(item)) {
+        listEl.removeChild(item);
+      } else if (item.parentNode && item.parentNode !== document.body) {
+        // Detached from list already (virtual remount); drop if it landed elsewhere
+        // inside our root (not the floating fallback on body).
+        const root = this.$el as HTMLElement | undefined;
+        if (root && root.contains(item)) {
+          item.parentNode.removeChild(item);
+        }
+      }
+      // Clean Sortable fallback leftovers hanging on body.
+      document
+        .querySelectorAll(".sortable-fallback, .sortable-drag")
+        .forEach((node) => {
+          if (node.parentNode) node.parentNode.removeChild(node);
+        });
     },
     spliceList(oldIndex: number, newIndex: number) {
       const list = this.realList;
@@ -765,10 +794,13 @@ export default Vue.extend({
       this.$emit(name, payload);
     },
     revertSortableDom(evt: SortableEvent) {
+      // Used only for add/remove stubs. Never reinsert an item that virtualization
+      // already unmounted — that creates duplicate data-id nodes.
       const parent = evt.from;
-      if (!parent || evt.oldIndex == null) return;
+      if (!parent || !evt.item || evt.oldIndex == null) return;
       const children = Array.from(parent.children) as HTMLElement[];
       const currentLocal = children.indexOf(evt.item);
+      if (currentLocal === -1) return;
       if (currentLocal === evt.oldIndex) return;
       const ref =
         evt.oldIndex >= children.length ? null : children[evt.oldIndex];
